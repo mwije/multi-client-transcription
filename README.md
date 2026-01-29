@@ -4,8 +4,6 @@ A **local, session-based transcription service** designed to support **multiple 
 
 >This repository represents an **exploratory implementation**, developed for evaluating on-premise transcription for healthcare use cases (e.g. radiology reporting) in a resource constrained setting.
 
----
-
 ## Overview
 
 Many healthcare institutions face dilemmas opting in for clinical dictation in healthcare workflows (e.g. radiology, clinic notes)
@@ -17,7 +15,6 @@ This project explores whether a **locally hosted transcription service**, shared
 
 This is a **technical exploration**, not a production system.
 
----
 
 ## Why This Repository Exists
 
@@ -30,7 +27,6 @@ This repository shares:
 * a **reference implementation** for local transcription experiments
 
 ---
-
 ## Design Goals
 
 * **Local-first**: all audio processing occurs on the local machine or network
@@ -41,9 +37,7 @@ This repository shares:
 
 Non-priorities: high availability, persistence, security hardening.
 
----
-
-## Architecture (High Level)
+## High Level Architecture
 
 ```
 Browser Clients
@@ -71,7 +65,6 @@ Browser Clients
 
 A single transcription engine instance is shared across client sessions to reflect realistic on-premise hardware limits.
 
----
 
 ## Dictation & Input Modes
 
@@ -95,7 +88,14 @@ The browser client supports two primary interaction patterns:
 
 All audio is normalized to **16 kHz mono PCM** before server-side processing.
 
----
+
+## API & Interaction Model
+
+* Clients explicitly create and close sessions
+* Audio is uploaded in discrete chunks
+* Transcripts are retrieved incrementally via polling
+* Processing state (queue depth, completion) is observable
+
 
 ## Transcription Models & Findings
 
@@ -107,9 +107,9 @@ All audio is normalized to **16 kHz mono PCM** before server-side processing.
 | **Whisper `large-v3-turbo`** https://huggingface.co/openai/whisper-large-v3-turbo | Highest accuracy among tested models                             | 2–3× latency on CPU; disruptive for interactive dictation                                        | Tested, not default |
 | **Whisper `small.en`** https://huggingface.co/openai/whisper-small.en       | Stable, predictable latency, near-real-time on CPU               | Slightly reduced accuracy vs larger models                                                       | **Current default** |
 
-> Evaluation focused on **CPU-first**, **privacy-aware**, near-real-time dictation workflows (e.g. radiology reporting).
+> Evaluation focused on **CPU-first**, **privacy-aware**, near-real-time dictation workflows (especially radiology reporting).
 
----
+
 
 ### Current Model Selection
 
@@ -121,9 +121,9 @@ All audio is normalized to **16 kHz mono PCM** before server-side processing.
 
 Larger Whisper variants improved accuracy but introduced unacceptable latency under CPU-only conditions for interactive use.
 
----
 
-### CPU Configuration Insight
+
+### CPU Configuration
 
 When running Whisper on CPU, inference stability was best when:
 
@@ -132,7 +132,6 @@ When running Whisper on CPU, inference stability was best when:
 
 This reduced contention and latency spikes during sustained dictation.
 
----
 
 ### Configuration Note
 
@@ -140,19 +139,18 @@ This reduced contention and latency spikes during sustained dictation.
 * Located in `engine.py`
 * Refactoring for improved configurability is planned
 
----
-
-## API & Interaction Model
-
-* Clients explicitly create and close sessions
-* Audio is uploaded in discrete chunks
-* Transcripts are retrieved incrementally via polling
-* Processing state (queue depth, completion) is observable
 
 ---
 
 
 ## Running Locally
+Setup python virtual environment and packages
+```bash
+python3 -m venv venv
+source venv/bin/activate
+
+pip install -r requirements.txt
+```
 
 ```bash
 python server.py
@@ -164,7 +162,28 @@ Then open `client.html` in a browser and connect to:
 http://localhost:8000
 ```
 
----
+### Microphone Access Permission
+Modern web browsers enforce strict security rules: microphone access is only allowed in secure contexts (typically HTTPS).
+
+- **Local testing**: Works on http://localhost without issues.
+- **Network testing**: Requires HTTPS. Use a self-signed SSL certificate with tools like Apache or Nginx to proxy to localhost.
+
+**A quick Nginx HTTPS setup:**
+```nginx
+server {
+    listen 443 ssl;
+    
+    ssl_certificate /path/to/self-signed.crt;
+    ssl_certificate_key /path/to/self-signed.key;
+
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
 
 ## Known Limitations
 
@@ -174,7 +193,7 @@ http://localhost:8000
 * Polling-based transcript delivery
 * Configuration is not yet externalized
 
----
+
 
 ## Future Directions
 
