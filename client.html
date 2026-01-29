@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Transcription</title>
+    <link rel="stylesheet" type="text/css" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ Real-Time Transcription</h1>
+
+        <div class="controls">
+            <div class="mode-selector">
+                <button class="mode-btn" data-mode="mic">🎤 Live Microphone</button>
+                <button class="mode-btn active" data-mode="file">📁 Upload File</button>
+            </div>
+
+            <div id="file-mode">
+                <div class="file-input-wrapper">
+                    <input type="file" id="audio-file" accept="audio/*">
+                    <label for="audio-file" class="file-input-label">
+                        <span id="file-label">Drop audio file or click to select</span>
+                    </label>
+                </div>
+            </div>
+
+            <div id="mic-mode" class="hidden">
+                <div class="mic-controls">
+                    <div class="mic-mode-toggle">
+                        <button class="mic-mode-option active" data-mic-mode="sentence">
+                            📝 Sentence Mode
+                        </button>
+                        <button class="mic-mode-option" data-mic-mode="continuous">
+                            🔄 Continuous Mode
+                        </button>
+                    </div>
+                    <div class="mic-action-row">
+                        <button id="mic-btn" class="mic-btn inactive">Hold SPACE to Record</button>
+                        <span class="mic-info" id="mic-info">Or click button • 16kHz mono</span>
+                        <div class="volume-meter" id="volume-meter">
+                            <div class="volume-bar" id="volume-bar"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="status">
+            <div class="status-item">
+                <div class="status-dot" id="status-dot"></div>
+                <span id="status-text">Ready</span>
+            </div>
+            <div class="status-item">
+                <div class="processing-dot" id="processing-dot"></div>
+                <span id="stats">Queue: 0 | Processed: 0</span>
+            </div>
+        </div>
+
+        <div class="progress">
+            <div class="progress-bar" id="progress-bar"></div>
+        </div>
+
+        <div class="transcript-header">
+            <span class="transcript-title">Transcription</span>
+            <button class="clear-btn" id="clear-btn">Clear</button>
+        </div>
+
+        <textarea id="dictation-box" placeholder="Start speaking or upload a file…" spellcheck="false"></textarea>
+
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8000';
+        const SAMPLE_RATE = 16000;
+        const FILE_CHUNK_SEC = 5.0;
+        const MIC_CHUNK_SEC = 2.0;
+        const POLL_INTERVAL_MS = 1500;
+
+        // === TYPING ANIMATION ===
+        class TypeWriter {
+            constructor(textarea) {
+                this.textarea = textarea;
+                this.queue = [];
+                this.typing = false;
+            }
+
+            add(text) {
+                if (!text) return;
+                
+                text = text.replace(/\s+/g, ' ').trim();
+                
+                if (this.textarea.value && !this.textarea.value.endsWith(' ')) {
+                    text = ' ' + text;
+                }
+                
+                this.queue.push(...text.split(''));
+                if (!this.typing) this.typeNext();
+            }
+
+            typeNext() {
+                if (this.queue.length === 0) {
+                    this.typing = false;
+                    return;
+                }
+                
+                this.typing = true;
+                this.textarea.value += this.queue.shift();
+                this.textarea.scrollTop = this.textarea.scrollHeight;
+                setTimeout(() => this.typeNext(), 40);
+            }
+
+            clear() {
+                this.queue = [];
+                this.typing = false;
+            }
+        }
+
+        // === TRANSCRIPTION CLIENT ===
+        class TranscriptionClient {
+            constructor() {
+                this.sessionId = null;
+                this.lastSeq = 0;
+                this.chunkSeq = 0;
+                this.pollTimer = null;
+                this.active = false;
+                
+                // Microphone
+                this.audioContext = null;
+                this.mediaStream = null;
+                this.processor = null;
+                this.source = null;
+                this.recording = false;
+                this.audioBuffer = [];
+                this.micSampleRate = null;
+            }
+
+            async createSession() {
+                const res = await fetch(`${API_URL}/session/create`, { method: 'POST' });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                
+                const data = await res.json();
+                this.sessionId = data.session_id;
+                this.active = true;
+                this.chunkSeq = 0;
+                this.lastSeq = 0;
+                
+                (`Session created: ${this.sessionId}`);
+                return this.sessionId;
+            }
+
+            async sendAudio(audioBytes, retries = 3) {
+                if (!this.active) return false;
+                
+                this.resumePolling(
+                    text => typeWriter.add(text),
+                    status => updateStats(status)
+                );
+
+                for (let i = 0; i < retries; i++) {
+                    try {
+                        const form = new FormData();
+                        form.append('file', new Blob([audioBytes], { type: 'audio/raw' }), 'audio.raw');
+                        
+                        const res = await fetch(`${API_URL}/session/${this.sessionId}/audio`, {
+                            method: 'POST',
+                            headers: { 'X-Sequence-Number': String(this.chunkSeq++) },
+                            body: form
+                        });
+                        
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        console.log(`Sent chunk ${this.chunkSeq - 1}`);
+                        return true;
+                        
+                    } catch (e) {
+                        if (i === retries - 1) {
+                            console.log(`Chunk ${this.chunkSeq - 1} failed after ${retries} retries`, e);
+                            throw e;
+                        }
+                        await new Promise(r => setTimeout(r, 500));
+                    }
+                }
+            }
+
+            async flush() {
+                if (!this.active) return;
+                
+                try {
+                    await fetch(`${API_URL}/session/${this.sessionId}/flush`, { method: 'POST' });
+                    console.log('Session flushed');
+                } catch (e) {
+                    console.log('Flush failed', e);
+                }
+            }
+
+            async close() {
+                if (!this.sessionId) return;
+                
+                const sid = this.sessionId;
+                this.active = false;
+                console.log("force stop");
+                this.stopPolling();
+                
+                try {
+                    await fetch(`${API_URL}/session/${sid}`, { method: 'DELETE' });
+                    console.log(`Session ${sid} closed`);
+                } catch (e) {
+                    console.log('Close failed', e);
+                }
+                
+                this.sessionId = null;
+            }
+
+            async getTranscripts() {
+                if (!this.active) return [];
+                
+                try {
+                    const res = await fetch(
+                        `${API_URL}/session/${this.sessionId}/transcripts?since_sequence=${this.lastSeq}`
+                    );
+                    if (!res.ok) return [];
+                    
+                    const data = await res.json();
+                    return data.transcripts || [];
+                } catch (e) {
+                    return [];
+                }
+            }
+
+            async getStatus() {
+                if (!this.active) return null;
+                
+                try {
+                    const res = await fetch(`${API_URL}/session/${this.sessionId}/status`);
+                    if (!res.ok) return null;
+                    return await res.json();
+                } catch (e) {
+                    return null;
+                }
+            }
+
+            startPolling(onTranscript, onStats) {
+                if (this.pollTimer) return;
+                
+                console.log('Polling started');
+                this.pollTimer = setInterval(async () => {
+                    if (!this.active) return;
+                    
+                    try {
+                        const [transcripts, status] = await Promise.all([
+                            this.getTranscripts(),
+                            this.getStatus()
+                        ]);
+                        
+                        if (transcripts.length > 0) {
+                            transcripts.forEach(t => {
+                                if (t.sequence >= this.lastSeq) {
+                                    console.log(`Transcript [${t.sequence}]: ${t.text}`);
+                                    onTranscript(t.text);
+                                    this.lastSeq = t.sequence + 1;
+                                }
+                            });
+                        }
+
+                        if (status && !status.is_processing && status.chunks_pending === 0) {
+                            updateStats(status);
+                            this.stopPolling();
+                            return;
+                        }
+                        
+                        if (status && onStats) {
+                            onStats(status);
+                        }
+                    } catch (e) {
+                        console.log('Poll error', e);
+                    }
+                }, POLL_INTERVAL_MS);
+            }
+
+            stopPolling() {
+                if (this.pollTimer) {
+                    clearInterval(this.pollTimer);
+                    this.pollTimer = null;
+                    console.log('Polling stopped');
+                }
+            }
+
+            resumePolling(onTranscript, onStats) {
+                if (!this.pollTimer && this.active) {
+                    console.log('Polling resumed');
+                    this.startPolling(onTranscript, onStats);
+                }
+            }
+
+            // === FILE PROCESSING ===
+            async processFile(file, onProgress) {
+                try {
+                    await this.createSession();
+                    this.startPolling(
+                        text => typeWriter.add(text),
+                        status => updateStats(status)
+                    );
+                    
+                    console.log(`Processing file: ${file.name}`);
+                    
+                    const arrayBuffer = await file.arrayBuffer();
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    
+                    console.log(`Decoded: ${audioBuffer.duration.toFixed(2)}s @ ${audioBuffer.sampleRate}Hz`);
+                    
+                    const resampled = resampleToMono16k(audioBuffer);
+                    const pcm = float32ToInt16(resampled);
+                    
+                    const chunkSize = SAMPLE_RATE * 2 * FILE_CHUNK_SEC;
+                    const totalChunks = Math.ceil(pcm.length / chunkSize);
+                    
+                    for (let i = 0; i < pcm.length; i += chunkSize) {
+                        const chunk = pcm.slice(i, Math.min(i + chunkSize, pcm.length));
+                        await this.sendAudio(chunk.buffer);
+                        
+                        const progress = ((i + chunk.length) / pcm.length) * 100;
+                        onProgress(progress, Math.floor(i / chunkSize) + 1, totalChunks);
+                    }
+                    
+                    await this.flush();
+                    
+                    // Wait for processing to complete
+                    await this.waitUntilComplete();
+                    
+                    await this.close();
+                    onProgress(0, 0, 0);
+                    
+                } catch (e) {
+                    console.log('File processing failed', e);
+                    await this.close();
+                    throw e;
+                }
+            }
+
+            async waitUntilComplete(timeout = 60000) {
+                const start = Date.now();
+                console.log('Waiting for completion...');
+                
+                while (Date.now() - start < timeout) {
+                    const status = await this.getStatus();
+                    
+                    if (status && !status.is_processing && status.chunks_pending === 0) {
+                        // Final poll to catch stragglers
+                        await new Promise(r => setTimeout(r, 500));
+                        const transcripts = await this.getTranscripts();
+                        transcripts.forEach(t => {
+                            if (t.sequence >= this.lastSeq) {
+                                typeWriter.add(t.text);
+                                this.lastSeq = t.sequence + 1;
+                            }
+                        });
+                        
+                        console.log('Processing complete');
+                        updateStats(status);
+                        return true;
+                    }
+                    
+                    await new Promise(r => setTimeout(r, 200));
+                }
+                
+                console.log('Completion timeout');
+                return false;
+            }
+
+            // === MICROPHONE ===
+            async initMic() {
+                if (this.audioContext) return; // Already initialized
+                
+                try {
+                    console.log('Initializing microphone...');
+                    
+                    this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    this.micSampleRate = this.audioContext.sampleRate;
+                    
+                    this.source = this.audioContext.createMediaStreamSource(this.mediaStream);
+                    this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+                    
+                    this.audioBuffer = [];
+                    
+                    console.log('Microphone initialized');
+                    
+                } catch (e) {
+                    console.log('Mic init failed', e);
+                    throw e;
+                }
+            }
+
+            async startMic(mode) {
+                try {
+                    // Ensure session and polling
+                    if (!this.sessionId) {
+                        await this.createSession();
+                        this.startPolling(
+                            text => typeWriter.add(text),
+                            status => updateStats(status)
+                        );
+                    }
+                    
+                    await this.initMic();
+                    
+                    console.log(`Recording started (${mode} mode)`);
+                    
+                    this.recording = true;
+                    this.audioBuffer = [];
+                    
+                    const samplesPerChunk = this.micSampleRate * MIC_CHUNK_SEC;
+                    
+                    this.processor.onaudioprocess = (e) => {
+                        if (!this.recording) return;
+                        
+                        const input = e.inputBuffer.getChannelData(0);
+                        this.audioBuffer.push(...input);
+
+                        // Volume meter
+                        let sum = 0;
+                        for (let i = 0; i < input.length; i++) {
+                            sum += input[i] * input[i];
+                        }
+                        const rms = Math.sqrt(sum / input.length);
+                        const volumePercent = Math.min(100, rms * 500); // Scale to 0-100%
+                        
+                        const volumeBar = document.getElementById('volume-bar');
+                        if (volumeBar) {
+                            volumeBar.style.width = `${volumePercent}%`;
+                        }
+                        
+                        if (mode === 'continuous' && this.audioBuffer.length >= samplesPerChunk) {
+                            this.sendMicBuffer(samplesPerChunk);
+                        }
+                    };
+                    
+                    if (!this.source.connected) {
+                        this.source.connect(this.processor);
+                        this.processor.connect(this.audioContext.destination);
+                    }
+                    
+                } catch (e) {
+                    console.log('Mic start failed', e);
+                    throw e;
+                }
+            }
+
+            sendMicBuffer(maxSamples = null) {
+                const count = maxSamples || this.audioBuffer.length;
+                if (this.audioBuffer.length === 0) return;
+                
+                const chunk = new Float32Array(this.audioBuffer.splice(0, count));
+                const resampled = resampleFloat32(chunk, this.micSampleRate, SAMPLE_RATE);
+                const pcm = float32ToInt16(resampled);
+                
+                this.sendAudio(pcm.buffer).catch(e => console.log('Mic send failed', e));
+            }
+
+            async stopMic(mode) {
+                console.log('Recording stopped');
+                this.recording = false;
+                
+                // Send remaining buffer
+                if (this.audioBuffer.length > 0) {
+                    this.sendMicBuffer();
+                }
+                
+                // Flush to trigger server processing
+                await this.flush();
+                
+                // DON'T disconnect audio nodes - keep them alive for next utterance
+                // DON'T close session - keep polling for results
+            }
+            
+            async closeMic() {
+                console.log('Closing microphone...');
+                
+                // NEW: Reset volume meter
+                const volumeBar = document.getElementById('volume-bar');
+                if (volumeBar) volumeBar.style.width = '0%';
+
+                if (this.processor) {
+                    this.processor.onaudioprocess = null;
+                    this.processor = null;
+                }
+                
+                if (this.source) {
+                    this.source = null;
+                }
+                
+                if (this.mediaStream) {
+                    this.mediaStream.getTracks().forEach(t => t.stop());
+                    this.mediaStream = null;
+                }
+                
+                if (this.audioContext) {
+                    this.audioContext.close();
+                    this.audioContext = null;
+                }
+                
+                console.log('Microphone closed');
+            }
+        }
+
+        // === AUDIO UTILITIES ===
+        function resampleFloat32(input, srcRate, dstRate) {
+            if (srcRate === dstRate) return input;
+            
+            const ratio = srcRate / dstRate;
+            const len = Math.round(input.length / ratio);
+            const output = new Float32Array(len);
+            
+            for (let i = 0; i < len; i++) {
+                const pos = i * ratio;
+                const i0 = Math.floor(pos);
+                const i1 = Math.min(i0 + 1, input.length - 1);
+                const t = pos - i0;
+                output[i] = input[i0] * (1 - t) + input[i1] * t;
+            }
+            
+            return output;
+        }
+
+        function resampleToMono16k(audioBuffer) {
+            let samples;
+            if (audioBuffer.numberOfChannels === 1) {
+                samples = audioBuffer.getChannelData(0);
+            } else {
+                const left = audioBuffer.getChannelData(0);
+                const right = audioBuffer.getChannelData(1);
+                samples = new Float32Array(left.length);
+                for (let i = 0; i < left.length; i++) {
+                    samples[i] = (left[i] + right[i]) / 2;
+                }
+            }
+            
+            return resampleFloat32(samples, audioBuffer.sampleRate, SAMPLE_RATE);
+        }
+
+        function float32ToInt16(float32) {
+            const int16 = new Int16Array(float32.length);
+            for (let i = 0; i < float32.length; i++) {
+                const s = Math.max(-1, Math.min(1, float32[i]));
+                int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            return int16;
+        }
+
+        // === UI ===
+        const client = new TranscriptionClient();
+        const typeWriter = new TypeWriter(document.getElementById('dictation-box'));
+
+        const modeBtns = document.querySelectorAll('.mode-btn');
+        const fileMode = document.getElementById('file-mode');
+        const micMode = document.getElementById('mic-mode');
+        const audioFileInput = document.getElementById('audio-file');
+        const fileLabel = document.getElementById('file-label');
+        const micBtn = document.getElementById('mic-btn');
+        const micInfo = document.getElementById('mic-info');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const stats = document.getElementById('stats');
+        const progressBar = document.getElementById('progress-bar');
+        const dictationBox = document.getElementById('dictation-box');
+        const clearBtn = document.getElementById('clear-btn');
+        const micModeOptions = document.querySelectorAll('.mic-mode-option');
+
+        let micMode_current = 'sentence';
+
+        modeBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                modeBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                
+                const mode = btn.dataset.mode;
+                fileMode.classList.toggle('hidden', mode !== 'file');
+                micMode.classList.toggle('hidden', mode !== 'mic');
+            });
+        });
+
+        micModeOptions.forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (client.recording) {
+                    alert('Stop recording before switching modes');
+                    return;
+                }
+                
+                micModeOptions.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                micMode_current = btn.dataset.micMode;
+                updateMicButton();
+            });
+        });
+
+        function updateMicButton() {
+            if (!client.recording) {
+                if (micMode_current === 'sentence') {
+                    micBtn.textContent = 'Hold SPACE to Record';
+                    micInfo.textContent = 'Send on release • 16kHz mono';
+                } else {
+                    micBtn.textContent = 'Start Recording';
+                    micInfo.textContent = 'Auto-send chunks • 16kHz mono';
+                }
+            }
+        }
+
+        audioFileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            fileLabel.textContent = file.name;
+            setStatus('processing', 'Processing...');
+            
+            try {
+                await client.processFile(file, (progress, current, total) => {
+                    if (progress > 0) {
+                        progressBar.style.width = `${progress}%`;
+                        statusText.textContent = `Uploading ${current}/${total}`;
+                    } else {
+                        progressBar.style.width = '0%';
+                        setStatus('idle', 'Complete');
+                    }
+                });
+            } catch (e) {
+                setStatus('idle', 'Error: ' + e.message);
+                progressBar.style.width = '0%';
+            }
+        });
+
+        micBtn.addEventListener('click', toggleMic);
+
+        let spaceHeld = false;
+
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && !e.repeat && !micMode.classList.contains('hidden') && !spaceHeld) {
+                if (micMode_current === 'sentence') {
+                    e.preventDefault();
+                    spaceHeld = true;
+                    if (!client.recording) toggleMic();
+                }
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'Space' && spaceHeld) {
+                if (micMode_current === 'sentence') {
+                    e.preventDefault();
+                    spaceHeld = false;
+                    if (client.recording) toggleMic();
+                }
+            }
+        });
+
+        async function toggleMic() {
+            if (!client.recording) {
+                setStatus('active', 'Recording...');
+                micBtn.classList.remove('inactive');
+                micBtn.classList.add('active');
+                micBtn.textContent = micMode_current === 'sentence' ? 
+                    'Recording... (Release SPACE)' : 'Stop Recording';
+                
+                await client.startMic(micMode_current);
+            } else {
+                setStatus('idle', 'Processing...');
+                micBtn.classList.remove('active');
+                micBtn.classList.add('inactive');
+                
+                await client.stopMic(micMode_current);
+                
+                setStatus('idle', 'Ready');
+                updateMicButton();
+            }
+        }
+
+        clearBtn.addEventListener('click', () => {
+            if (!dictationBox.value.trim()) return;
+            
+            if (confirm('Clear all transcribed text?')) {
+                dictationBox.value = '';
+                typeWriter.clear();
+            }
+        });
+        
+        // Cleanup on mode switch
+        modeBtns.forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const oldMode = document.querySelector('.mode-btn.active');
+                
+                // If switching away from mic mode, cleanup
+                if (oldMode && oldMode.dataset.mode === 'mic' && btn.dataset.mode !== 'mic') {
+                    if (client.recording) {
+                        await client.stopMic(micMode_current);
+                    }
+                    await client.closeMic();
+                    
+                    // Close session if active
+                    if (client.sessionId) {
+                        await client.close();
+                    }
+                }
+                
+                modeBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                
+                const mode = btn.dataset.mode;
+                fileMode.classList.toggle('hidden', mode !== 'file');
+                micMode.classList.toggle('hidden', mode !== 'mic');
+            });
+        });
+
+        function setStatus(state, text) {
+            statusDot.className = 'status-dot';
+            if (state !== 'idle') statusDot.classList.add(state);
+            statusText.textContent = text;
+        }
+
+        function updateStats(status) {
+            stats.textContent = `Queue: ${status.chunks_pending || 0} | Processed: ${status.chunks_completed || 0}`;
+
+            const processingDot = document.getElementById('processing-dot');
+            if (status.chunks_pending > 0 || status.is_processing) {
+                processingDot.classList.add('processing');
+            } else {
+                processingDot.classList.remove('processing');
+            }
+        }
+
+        window.addEventListener('beforeunload', async (e) => {
+            if (client.recording) {
+                await client.stopMic(micMode_current);
+            }
+            await client.closeMic();
+            
+            if (client.sessionId) {
+                e.preventDefault();
+                e.returnValue = 'Transcription in progress';
+            }
+        });
+
+        // Auto-select mic mode on load
+        document.addEventListener('DOMContentLoaded', () => {
+            const micModeBtn = document.querySelector('[data-mode="mic"]');
+            if (micModeBtn) micModeBtn.click();
+        });
+    </script>
+</body>
+</html>

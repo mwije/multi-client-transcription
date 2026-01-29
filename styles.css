@@ -1,0 +1,337 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 1rem;
+            min-height: 100vh;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { font-size: 2rem; font-weight: 600; }
+        
+        .controls {
+            background: #1e293b;
+            padding: 1.5rem;
+            border-radius: 12px;
+            margin-bottom: .5rem;
+        }
+        
+        .mode-selector {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: .5rem;
+        }
+        
+        .mode-btn {
+            flex: 1;
+            padding: 0.5rem;
+            border: 2px solid #334155;
+            background: transparent;
+            color: #94a3b8;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            transition: all 0.2s;
+        }
+        
+        .mode-btn.active {
+            background: #3b82f6;
+            border-color: #3b82f6;
+            color: white;
+        }
+        
+        .file-input-wrapper {
+            position: relative;
+            margin-bottom: 1rem;
+        }
+        
+        input[type="file"] {
+            position: absolute;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+        
+        .file-input-label {
+            display: block;
+            padding: 1rem;
+            border: 2px dashed #475569;
+            border-radius: 8px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .file-input-label:hover {
+            border-color: #3b82f6;
+            background: #1e293b;
+        }
+        
+        .mic-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .mic-mode-toggle {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.2rem;
+            background: #0f172a;
+            border-radius: 8px;
+        }
+
+        .mic-mode-option {
+            flex: 1;
+            padding: 0.5rem;
+            border: none;
+            background: transparent;
+            color: #64748b;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .mic-mode-option.active {
+            background: #334155;
+            color: #e2e8f0;
+        }
+
+        .mic-action-row {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        
+        .mic-btn {
+            padding: 1rem 2rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+        
+        .mic-btn.inactive {
+            background: #3b82f6;
+            color: white;
+        }
+        
+        .mic-btn.active {
+            background: #ef4444;
+            color: white;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .mic-info {
+            color: #64748b;
+            font-size: 0.875rem;
+        }
+        
+        .status {
+            background: #1e293b;
+            padding: .5rem;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.875rem;
+        }
+        
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #64748b;
+        }
+        
+        .status-dot.active { background: #10b981; animation: blink 1s infinite; }
+        .status-dot.processing { background: #f59e0b; animation: blink 0.5s infinite; }
+        
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        
+        .progress {
+            height: 4px;
+            background: #334155;
+            border-radius: 2px;
+            overflow: hidden;
+            margin-bottom: 1.5rem;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        .transcript-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.2rem;
+        }
+
+        .transcript-title {
+            font-size: 0.875rem;
+            color: #94a3b8;
+            font-weight: 500;
+        }
+
+        .clear-btn {
+            padding: 0.375rem 0.75rem;
+            background: transparent;
+            border: 1px solid #475569;
+            color: #94a3b8;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .clear-btn:hover {
+            background: #ef4444;
+            border-color: #ef4444;
+            color: white;
+        }
+
+        #dictation-box {
+            width: 100%;
+            min-height: 300px;
+            max-height: 500px;
+            resize: vertical;
+            background: #1e293b;
+            color: #e2e8f0;
+            border: none;
+            border-radius: 12px;
+            padding: 1rem;
+            font-size: 1rem;
+            line-height: 1.6;
+            outline: none;
+            white-space: pre-wrap;
+        }
+
+        #dictation-box:focus {
+            background: #1e293b;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 1.5rem;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            color: #f1f5f9;
+        }
+
+        .modal-message {
+            color: #cbd5e1;
+            margin-bottom: 1.5rem;
+            line-height: 1.5;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 0.75rem;
+            justify-content: flex-end;
+        }
+
+        .modal-btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+
+        .modal-btn.cancel {
+            background: #334155;
+            color: #e2e8f0;
+        }
+
+        .modal-btn.cancel:hover {
+            background: #475569;
+        }
+
+        .modal-btn.confirm {
+            background: #ef4444;
+            color: white;
+        }
+
+        .modal-btn.confirm:hover {
+            background: #dc2626;
+        }
+        
+        .hidden { display: none !important; }
+
+        .processing-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #666;
+            margin-right: 8px;
+            transition: all 0.3s ease;
+        }
+        
+        .processing-dot.processing {
+            background: #0bf580;
+            box-shadow: 0 0 8px rgba(11, 229, 245, 0.6);
+            animation: blink 0.5s infinite;
+        }
+
+        .volume-meter {
+            width: 100px;
+            height: 6px;
+            background: #2a2a2a;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-left: 12px;
+        }
+        
+        .volume-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #10b981 0%, #f59e0b 70%, #ef4444 100%);
+            background-size: 100px 100%;
+            transition: width 0.1s ease;
+        }
+        
