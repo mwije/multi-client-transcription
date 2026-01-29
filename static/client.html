@@ -743,6 +743,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             const micModeBtn = document.querySelector('[data-mode="mic"]');
             if (micModeBtn) micModeBtn.click();
+            navigator.mediaDevices.getUserMedia({ audio: true });
         });
     </script>
 </body>

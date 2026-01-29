@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -169,6 +170,8 @@ async def health_check():
         "model_ready": engine.is_ready()
     }
 
+# Mount static folder at ROOT (/)
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
