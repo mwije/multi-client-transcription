@@ -1,19 +1,18 @@
 # 🎙️ Local Multi-Client Transcription Service
 
-A **local, session-based transcription service** designed to support **multiple concurrent clients** using a shared speech-to-text engine, with particular attention to **privacy, constrained compute environments, and clinical dictation workflows**.
+A local, session-based transcription service designed to support **multiple concurrent clients** using a shared speech-to-text engine, with particular attention to privacy, constrained compute environments, and clinical dictation workflows.
 
->This repository represents an **exploratory implementation**, developed for evaluating on-premise transcription for healthcare use cases (e.g. radiology reporting) in a resource constrained setting.
+>This repository hosts an **exploratory implementation** for evaluating on-premise transcription for healthcare use cases (e.g. radiology reporting) in a resource constrained setting.
 
 ## Overview
 
 Many healthcare institutions face dilemmas opting in for clinical dictation in healthcare workflows (e.g. radiology, clinic notes)
 * Cloud-based transcription raises privacy, governance, and cost concerns
-* On-premise IT infrastructure are often **CPU-constrained**
-* Clinicians expect **incremental feedback**, not long batch delays
+* On-premise healthcare IT infrastructure are often constrained
+* Clinicians expect incremental feedback, not long batch delays
 
-This project explores whether a **locally hosted transcription service**, shared across users, can provide **acceptable latency and reliability** under these constraints.
+This project explores whether a **locally hosted transcription service**, shared across users, can provide acceptable latency and reliability under these constraints.
 
-This is a **technical exploration**, not a production system.
 
 
 ## Why This Repository Exists
@@ -31,7 +30,7 @@ This repository shares:
 
 * **Local-first**: all audio processing occurs on the local machine or network
 * **Multi-client**: multiple users can connect concurrently via isolated sessions
-* **CPU-first**: designed and tested under CPU-constrained conditions
+* **CPU-first**: designed and tested under CPU-constrained conditions. Can also be configured for GPU if available.
 * **Incremental transcription**: partial results delivered during dictation
 * **Operational clarity**: explicit session lifecycle and observable state
 
@@ -57,8 +56,8 @@ Browser Clients
 ┌───────────┴───────────────┐
 │  Transcription Engine     │
 │───────────────────────────│
-│ • CPU-first inference     │
-│ • Shared across sessions  │
+│ • Speech Recognition      │
+│ • Serves across sessions  │
 │ • Model-configurable      │
 └───────────────────────────┘
 ```
@@ -96,49 +95,52 @@ All audio is normalized to **16 kHz mono PCM** before server-side processing.
 * Transcripts are retrieved incrementally via polling
 * Processing state (queue depth, completion) is observable
 
+## Transcription Model Benchmarks
 
-## Transcription Models & Findings
+This project targets **CPU-only, privacy-aware, near-real-time dictation**, evaluated using a realistic clinical audio sample (≈151s, non-native speaker).
 
-### Model Evaluation Summary
+Model selection is driven by **measured latency, scaling behavior, and stability**, not peak accuracy alone.
 
-| Model                        | Strengths                                                        | Limitations                                                                                      | Outcome             |
-| ---------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------- |
-| **Google MedASR** https://huggingface.co/google/medasr            | Clinically trained, fast on CPU, promising for medical dictation | Inconsistent transcript quality in noisy environments; struggled with non-native English accents | Not adopted         |
-| **Whisper `large-v3-turbo`** https://huggingface.co/openai/whisper-large-v3-turbo | Highest accuracy among tested models                             | 2–3× latency on CPU; disruptive for interactive dictation                                        | Tested, not default |
-| **Whisper `small.en`** https://huggingface.co/openai/whisper-small.en       | Stable, predictable latency, near-real-time on CPU               | Slightly reduced accuracy vs larger models                                                       | **Current default** |
+### Models evaluated
 
-> Evaluation focused on **CPU-first**, **privacy-aware**, near-real-time dictation workflows (especially radiology reporting).
+#### [**Google MedASR**](https://huggingface.co/google/medasr)
+  Clinically trained and fast on CPU, but transcript quality was low, probably due to ambient noise and non-native accents.  
+  → Not adopted.
+
+#### [**OpenAI Whisper `small.en`**](https://huggingface.co/openai/whisper-small.en)
+  Consistently achieved the lowest real-time factor (RTF) across both systems.  
+  Optimal performance occurred near physical core count, with clear degradation when oversubscribing threads.  
+  → **Default model**
+
+#### [**OpenAI Whisper `medium.en`**](https://huggingface.co/openai/whisper-medium.en)  
+  Improved accuracy, but showed diminishing returns and unstable scaling under CPU-only execution.  
+  Oversubscription significantly increased latency variance.  
+  → Plausible but heavier for interactive use
+
+#### [**Distil Whisper `distil-large-v3`**](https://huggingface.co/distil-whisper/distil-large-v3)
+  Demonstrated a strong accuracy/RTF trade-off on server-class CPUs.  
+  Outperformed `medium.en` in sustained throughput when threads were capped conservatively.  
+  → Viable option for non-interactive or server-side workloads
+
+#### [**OpenAI Whisper `large-v3-turbo`**](https://huggingface.co/openai/whisper-large-v3-turbo)
+  Evaluated experimentally on the laptop system.
+  Despite higher accuracy, CPU latency remained high for real-time dictation.  
+  → Tested for insight only
+
+#### Benchmark Insights
+- Best performance occurred at or below **physical core count**
+- Oversubscribing threads degrades Real-Time Factor
+- Larger models were more sensitive to thread misconfiguration
+![RTF vs Thread Count](benchmarks/data/rtf_vs_threads.png)
+> Full benchmark data, methodology and plots are available in [`benchmarks/`](./benchmarks).
 
 
 
-### Current Model Selection
+### Configuration note
 
-**Whisper `small.en`** is used by default as a practical balance between:
-
-* transcription quality
-* operational stability
-* near-real-time responsiveness on CPU
-
-Larger Whisper variants improved accuracy but introduced unacceptable latency under CPU-only conditions for interactive use.
-
-
-
-### CPU Configuration
-
-When running Whisper on CPU, inference stability was best when:
-
-* `cpu_threads` ≈ **physical CPU cores**
-  (rather than logical cores / hyperthreads)
-
-This reduced contention and latency spikes during sustained dictation.
-
-
-### Configuration Note
-
-* Model and engine configuration is currently **hardcoded**
-* Located in `engine.py`
-* Refactoring for improved configurability is planned
-
+Model and engine configuration is currently **hardcoded** in `engine.py`.  
+This reflects the narrow operating envelope identified in benchmarking.  
+Refactoring for runtime configurability is planned.
 
 ---
 
@@ -156,10 +158,10 @@ pip install -r requirements.txt
 python server.py
 ```
 
-Then open `client.html` in a browser and connect to:
+Then open `web client` in a browser:
 
 ```
-http://localhost:8000
+http://localhost:8000/client.html
 ```
 
 ### Microphone Access Permission
