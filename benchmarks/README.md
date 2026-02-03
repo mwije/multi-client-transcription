@@ -1,4 +1,4 @@
-# CPU transcription benchmarks (faster-whisper)
+# CPU Transcription Benchmarks
 
 This is the summary of CPU benchmark findings to inform transcription model selection for this project.
 
@@ -32,7 +32,7 @@ Benchmarks focus on **real-time feasibility, thread scaling behavior and resourc
 
 Results should be interpreted comparatively, not as absolute performance claims.
 
-
+---
 
 ## Key Insights
 
@@ -45,7 +45,6 @@ For all models:
 
 This effect is strongest for larger models.
 
----
 
 ### 2. `small.en` is the most practical CPU model
 
@@ -55,7 +54,6 @@ This effect is strongest for larger models.
 
 This makes it the most reliable choice for **interactive dictation**.
 
----
 
 ### 3. `distil-large-v3` excels on server CPUs
 
@@ -64,7 +62,6 @@ On the server-class system:
 - Maintained stable RTF across a wider thread range
 - Represents the best accuracy/latency compromise for batch or server-side transcription
 
----
 
 ### 4. Larger models amplify misconfiguration costs
 
